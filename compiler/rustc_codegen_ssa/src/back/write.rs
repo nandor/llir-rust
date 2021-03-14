@@ -139,8 +139,9 @@ impl ModuleConfig {
 
         let emit_obj = if !should_emit_obj {
             EmitObj::None
-        } else if sess.target.obj_is_bitcode
-            || (sess.opts.cg.linker_plugin_lto.enabled() && !no_builtins)
+        } else if !sess.target.is_llir &&
+            (sess.target.obj_is_bitcode
+            || (sess.opts.cg.linker_plugin_lto.enabled() && !no_builtins))
         {
             // This case is selected if the target uses objects as bitcode, or
             // if linker plugin LTO is enabled. In the linker plugin LTO case
@@ -157,7 +158,7 @@ impl ModuleConfig {
             // `#![no_builtins]` is assumed to not participate in LTO and
             // instead goes on to generate object code.
             EmitObj::Bitcode
-        } else if need_bitcode_in_object(sess) {
+        } else if !sess.target.is_llir && need_bitcode_in_object(sess) {
             EmitObj::ObjectCode(BitcodeSection::Full)
         } else {
             EmitObj::ObjectCode(BitcodeSection::None)

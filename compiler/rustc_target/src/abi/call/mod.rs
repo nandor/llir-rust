@@ -606,7 +606,7 @@ impl<'a, Ty> FnAbi<'a, Ty> {
                 };
                 x86::compute_abi_info(cx, self, flavor);
             }
-            "x86_64" => {
+            "x86_64" | "llir_x86_64" => {
                 if abi == spec::abi::Abi::SysV64 {
                     x86_64::compute_abi_info(cx, self);
                 } else if abi == spec::abi::Abi::Win64 || cx.target_spec().is_like_windows {

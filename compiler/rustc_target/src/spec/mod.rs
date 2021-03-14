@@ -558,6 +558,8 @@ impl ToJson for StackProbeType {
 }
 
 supported_targets! {
+    ("llir_x86_64-unknown-linux-musl", llir_x86_64_unknown_linux_musl),
+
     ("x86_64-unknown-linux-gnu", x86_64_unknown_linux_gnu),
     ("x86_64-unknown-linux-gnux32", x86_64_unknown_linux_gnux32),
     ("i686-unknown-linux-gnu", i686_unknown_linux_gnu),
@@ -894,6 +896,8 @@ pub struct TargetOptions {
     pub os_family: Option<String>,
     /// Whether the target toolchain's ABI supports returning small structs as an integer.
     pub abi_return_struct_as_int: bool,
+    /// Whether the particular toolchain is built for LLIR.
+    pub is_llir: bool,
     /// Whether the target toolchain is like macOS's. Only useful for compiling against iOS/macOS,
     /// in particular running dsymutil and some other stuff like `-dead_strip`. Defaults to false.
     pub is_like_osx: bool,
@@ -1123,6 +1127,7 @@ impl Default for TargetOptions {
             staticlib_suffix: ".a".to_string(),
             os_family: None,
             abi_return_struct_as_int: false,
+            is_llir: false,
             is_like_osx: false,
             is_like_solaris: false,
             is_like_windows: false,

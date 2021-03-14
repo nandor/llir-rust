@@ -36,7 +36,7 @@ cfg_if::cfg_if! {
     }
 }
 
-#[cfg(target_env = "musl")]
+#[cfg(all(target_env = "musl", not(target_arch = "llir_x86_64")))]
 #[link(name = "unwind", kind = "static", cfg(target_feature = "crt-static"))]
 #[link(name = "gcc_s", cfg(not(target_feature = "crt-static")))]
 extern "C" {}
@@ -56,6 +56,15 @@ extern "C" {}
 #[cfg(all(
     target_os = "linux",
     target_env = "gnu",
+    not(feature = "llvm-libunwind"),
+    feature = "system-llvm-libunwind"
+))]
+#[link(name = "unwind", cfg(not(target_feature = "crt-static")))]
+extern "C" {}
+
+#[cfg(all(
+    target_os = "linux",
+    target_env = "musl",
     not(feature = "llvm-libunwind"),
     feature = "system-llvm-libunwind"
 ))]

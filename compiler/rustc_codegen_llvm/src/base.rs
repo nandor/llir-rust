@@ -65,8 +65,10 @@ pub fn write_compressed_metadata<'tcx>(
         // Also generate a .section directive to force no
         // flags, at least for ELF outputs, so that the
         // metadata doesn't get loaded into memory.
-        let directive = format!(".section {}", section_name);
-        llvm::LLVMSetModuleInlineAsm2(metadata_llmod, directive.as_ptr().cast(), directive.len())
+        if !tcx.sess.target.is_llir {
+            let directive = format!(".section {}", section_name);
+            llvm::LLVMSetModuleInlineAsm2(metadata_llmod, directive.as_ptr().cast(), directive.len())
+        }
     }
 }
 

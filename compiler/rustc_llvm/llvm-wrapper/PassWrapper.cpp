@@ -20,6 +20,7 @@
 #include "llvm/Support/CBindingWrapping.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Host.h"
+#include "llvm/Support/Program.h"
 #include "llvm/Target/TargetMachine.h"
 #include "llvm/Transforms/IPO/PassManagerBuilder.h"
 #include "llvm/Transforms/IPO/AlwaysInliner.h"
@@ -237,6 +238,12 @@ void LLVMRustAddLastExtensionPasses(
 #define SUBTARGET_HEXAGON
 #endif
 
+#ifdef LLVM_COMPONENT_LLIR
+#define SUBTARGET_LLIR SUBTARGET(LLIR)
+#else
+#define SUBTARGET_LLIR
+#endif
+
 #define GEN_SUBTARGETS                                                         \
   SUBTARGET_X86                                                                \
   SUBTARGET_ARM                                                                \
@@ -249,6 +256,7 @@ void LLVMRustAddLastExtensionPasses(
   SUBTARGET_SPARC                                                              \
   SUBTARGET_HEXAGON                                                            \
   SUBTARGET_RISCV                                                              \
+  SUBTARGET_LLIR                                                               \
 
 #define SUBTARGET(x)                                                           \
   namespace llvm {                                                             \
@@ -612,45 +620,99 @@ static TargetMachine::CodeGenFileType fromRust(LLVMRustFileType Type) {
 }
 #endif
 
+static llvm::Error
+RunExecutable(llvm::Twine Exe, llvm::ArrayRef<llvm::StringRef> Args)
+{
+  if (auto P = llvm::sys::findProgramByName(Exe.str())) {
+    if (auto code = llvm::sys::ExecuteAndWait(*P, Args)) {
+      std::string Msg;
+      llvm::raw_string_ostream os(Msg);
+      os << "command failed: " << Exe << " ";
+      for (size_t i = 1, n = Args.size(); i < n; ++i) {
+        os << Args[i] << " ";
+      }
+      os << "\n";
+      return llvm::make_error<llvm::StringError>(Msg, llvm::inconvertibleErrorCode());
+    }
+    return llvm::Error::success();
+  }
+  return llvm::make_error<llvm::StringError>("Missing executable " + Exe,
+                                             llvm::inconvertibleErrorCode());
+}
+
 extern "C" LLVMRustResult
 LLVMRustWriteOutputFile(LLVMTargetMachineRef Target, LLVMPassManagerRef PMR,
                         LLVMModuleRef M, const char *Path, const char *DwoPath,
                         LLVMRustFileType RustFileType) {
   llvm::legacy::PassManager *PM = unwrap<llvm::legacy::PassManager>(PMR);
   auto FileType = fromRust(RustFileType);
+  llvm::Triple TT = unwrap(Target)->getTargetTriple();
 
-  std::string ErrorInfo;
-  std::error_code EC;
-  raw_fd_ostream OS(Path, EC, sys::fs::F_None);
-  if (EC)
-    ErrorInfo = EC.message();
-  if (ErrorInfo != "") {
-    LLVMRustSetLastError(ErrorInfo.c_str());
-    return LLVMRustResult::Failure;
-  }
+  if (TT.isLLIR()) {
+    // Generate to a temporary file.
+    auto TmpOrError = llvm::sys::fs::TempFile::create("/tmp/rustc-%%%%%%%");
+    if (!TmpOrError) {
+      LLVMRustSetLastError(toString(TmpOrError.takeError()).c_str());
+      return LLVMRustResult::Failure;
+    }
 
-  buffer_ostream BOS(OS);
-  if (DwoPath) {
-    raw_fd_ostream DOS(DwoPath, EC, sys::fs::F_None);
-    EC.clear();
+    {
+      std::error_code EC;
+      raw_fd_ostream OS(TmpOrError->TmpName, EC, sys::fs::F_None);
+      if (EC) {
+        LLVMRustSetLastError(EC.message().c_str());
+        return LLVMRustResult::Failure;
+      }
+      buffer_ostream BOS(OS);
+      if (unwrap(Target)->addPassesToEmitFile(*PM, BOS, nullptr, CGFT_AssemblyFile, false)) {
+        report_fatal_error("Cannot create emitter");
+      }
+      PM->run(*unwrap(M));
+      LLVMDisposePassManager(PMR);
+    }
+
+    // Run the LLIR linker.
+    std::string As = TT.str() + "-as";
+    auto AsError = RunExecutable(As, {As, TmpOrError->TmpName, "-o", Path});
+    if (AsError) {
+      consumeError(TmpOrError->keep());
+      LLVMRustSetLastError(toString(std::move(AsError)).c_str());
+      return LLVMRustResult::Failure;
+    }
+    consumeError(TmpOrError->discard());
+  } else {
+    std::string ErrorInfo;
+    std::error_code EC;
+    raw_fd_ostream OS(Path, EC, sys::fs::F_None);
     if (EC)
-        ErrorInfo = EC.message();
+      ErrorInfo = EC.message();
     if (ErrorInfo != "") {
       LLVMRustSetLastError(ErrorInfo.c_str());
       return LLVMRustResult::Failure;
     }
-    buffer_ostream DBOS(DOS);
-    unwrap(Target)->addPassesToEmitFile(*PM, BOS, &DBOS, FileType, false);
-    PM->run(*unwrap(M));
-  } else {
-    unwrap(Target)->addPassesToEmitFile(*PM, BOS, nullptr, FileType, false);
-    PM->run(*unwrap(M));
-  }
 
-  // Apparently `addPassesToEmitFile` adds a pointer to our on-the-stack output
-  // stream (OS), so the only real safe place to delete this is here? Don't we
-  // wish this was written in Rust?
-  LLVMDisposePassManager(PMR);
+    buffer_ostream BOS(OS);
+    if (DwoPath) {
+      raw_fd_ostream DOS(DwoPath, EC, sys::fs::F_None);
+      EC.clear();
+      if (EC)
+          ErrorInfo = EC.message();
+      if (ErrorInfo != "") {
+        LLVMRustSetLastError(ErrorInfo.c_str());
+        return LLVMRustResult::Failure;
+      }
+      buffer_ostream DBOS(DOS);
+      unwrap(Target)->addPassesToEmitFile(*PM, BOS, &DBOS, FileType, false);
+      PM->run(*unwrap(M));
+    } else {
+      unwrap(Target)->addPassesToEmitFile(*PM, BOS, nullptr, FileType, false);
+      PM->run(*unwrap(M));
+    }
+    // Apparently `addPassesToEmitFile` adds a pointer to our on-the-stack output
+    // stream (OS), so the only real safe place to delete this is here? Don't we
+    // wish this was written in Rust?
+    LLVMDisposePassManager(PMR);
+  }
   return LLVMRustResult::Success;
 }
 
@@ -676,21 +738,20 @@ void LLVMSelfProfileInitializeCallbacks(
     PassInstrumentationCallbacks& PIC, void* LlvmSelfProfiler,
     LLVMRustSelfProfileBeforePassCallback BeforePassCallback,
     LLVMRustSelfProfileAfterPassCallback AfterPassCallback) {
-  PIC.registerBeforePassCallback([LlvmSelfProfiler, BeforePassCallback](
+  PIC.registerBeforeNonSkippedPassCallback([LlvmSelfProfiler, BeforePassCallback](
                                      StringRef Pass, llvm::Any Ir) {
     std::string PassName = Pass.str();
     std::string IrName = LLVMRustwrappedIrGetName(Ir);
     BeforePassCallback(LlvmSelfProfiler, PassName.c_str(), IrName.c_str());
-    return true;
   });
 
   PIC.registerAfterPassCallback(
-      [LlvmSelfProfiler, AfterPassCallback](StringRef Pass, llvm::Any Ir) {
+      [LlvmSelfProfiler, AfterPassCallback](StringRef Pass, llvm::Any Ir, const PreservedAnalyses &) {
         AfterPassCallback(LlvmSelfProfiler);
       });
 
   PIC.registerAfterPassInvalidatedCallback(
-      [LlvmSelfProfiler, AfterPassCallback](StringRef Pass) {
+      [LlvmSelfProfiler, AfterPassCallback](StringRef Pass, const PreservedAnalyses &) {
         AfterPassCallback(LlvmSelfProfiler);
       });
 
@@ -751,8 +812,10 @@ LLVMRustOptimizeWithNewPassManager(
   PTO.LoopVectorization = LoopVectorize;
   PTO.SLPVectorization = SLPVectorize;
 
+  bool DebugLogging = false;
+
   PassInstrumentationCallbacks PIC;
-  StandardInstrumentations SI;
+  StandardInstrumentations SI(DebugLogging);
   SI.registerCallbacks(PIC);
 
   if (LlvmSelfProfiler){
@@ -768,7 +831,7 @@ LLVMRustOptimizeWithNewPassManager(
     PGOOpt = PGOOptions(PGOUsePath, "", "", PGOOptions::IRUse);
   }
 
-  PassBuilder PB(TM, PTO, PGOOpt, &PIC);
+  PassBuilder PB(DebugLogging, TM, PTO, PGOOpt, &PIC);
 
   // FIXME: We may want to expose this as an option.
   bool DebugPassManager = false;
@@ -793,7 +856,12 @@ LLVMRustOptimizeWithNewPassManager(
 
   // We manually collect pipeline callbacks so we can apply them at O0, where the
   // PassBuilder does not create a pipeline.
+#if LLVM_VERSION_GE(12, 0)
+  std::vector<std::function<void(ModulePassManager &, PassBuilder::OptimizationLevel)>>
+      PipelineStartEPCallbacks;
+#else
   std::vector<std::function<void(ModulePassManager &)>> PipelineStartEPCallbacks;
+#endif
 #if LLVM_VERSION_GE(11, 0)
   std::vector<std::function<void(ModulePassManager &, PassBuilder::OptimizationLevel)>>
       OptimizerLastEPCallbacks;
@@ -803,9 +871,17 @@ LLVMRustOptimizeWithNewPassManager(
 #endif
 
   if (VerifyIR) {
+#if LLVM_VERSION_GE(12, 0)
+    PipelineStartEPCallbacks.push_back(
+      [VerifyIR](ModulePassManager &MPM, PassBuilder::OptimizationLevel Level) {
+        MPM.addPass(VerifierPass());
+      }
+    );
+#else
     PipelineStartEPCallbacks.push_back([VerifyIR](ModulePassManager &MPM) {
         MPM.addPass(VerifierPass());
     });
+#endif
   }
 
   if (SanitizerOptions) {
@@ -894,7 +970,11 @@ LLVMRustOptimizeWithNewPassManager(
   if (!NoPrepopulatePasses) {
     if (OptLevel == PassBuilder::OptimizationLevel::O0) {
       for (const auto &C : PipelineStartEPCallbacks)
+#if LLVM_VERSION_GE(12, 0)
+        C(MPM, OptLevel);
+#else
         C(MPM);
+#endif
 
 #if LLVM_VERSION_GE(11, 0)
       for (const auto &C : OptimizerLastEPCallbacks)
@@ -910,7 +990,13 @@ LLVMRustOptimizeWithNewPassManager(
 
       MPM.addPass(AlwaysInlinerPass(EmitLifetimeMarkers));
 
-#if LLVM_VERSION_GE(10, 0)
+#if LLVM_VERSION_GE(12, 0)
+      if (PGOOpt) {
+        PB.addPGOInstrPassesForO0(
+            MPM, PGOOpt->Action == PGOOptions::IRInstr,
+            /*IsCS=*/false, PGOOpt->ProfileFile, PGOOpt->ProfileRemappingFile);
+      }
+#elif LLVM_VERSION_GE(10, 0)
       if (PGOOpt) {
         PB.addPGOInstrPassesForO0(
             MPM, DebugPassManager, PGOOpt->Action == PGOOptions::IRInstr,
@@ -927,10 +1013,18 @@ LLVMRustOptimizeWithNewPassManager(
 
       switch (OptStage) {
       case LLVMRustOptStage::PreLinkNoLTO:
+#if LLVM_VERSION_GE(12, 0)
+        MPM = PB.buildPerModuleDefaultPipeline(OptLevel);
+#else
         MPM = PB.buildPerModuleDefaultPipeline(OptLevel, DebugPassManager);
+#endif
         break;
       case LLVMRustOptStage::PreLinkThinLTO:
+#if LLVM_VERSION_GE(12, 0)
+        MPM = PB.buildThinLTOPreLinkDefaultPipeline(OptLevel);
+#else
         MPM = PB.buildThinLTOPreLinkDefaultPipeline(OptLevel, DebugPassManager);
+#endif
 #if LLVM_VERSION_GE(11, 0)
         for (const auto &C : OptimizerLastEPCallbacks)
           C(MPM, OptLevel);
@@ -944,15 +1038,27 @@ LLVMRustOptimizeWithNewPassManager(
 #endif
         break;
       case LLVMRustOptStage::PreLinkFatLTO:
+#if LLVM_VERSION_GE(12, 0)
+        MPM = PB.buildLTOPreLinkDefaultPipeline(OptLevel);
+#else
         MPM = PB.buildLTOPreLinkDefaultPipeline(OptLevel, DebugPassManager);
+#endif
         break;
       case LLVMRustOptStage::ThinLTO:
         // FIXME: Does it make sense to pass the ModuleSummaryIndex?
         // It only seems to be needed for C++ specific optimizations.
+#if LLVM_VERSION_GE(12, 0)
+        MPM = PB.buildThinLTODefaultPipeline(OptLevel, nullptr);
+#else
         MPM = PB.buildThinLTODefaultPipeline(OptLevel, DebugPassManager, nullptr);
+#endif
         break;
       case LLVMRustOptStage::FatLTO:
+#if LLVM_VERSION_GE(12, 0)
+        MPM = PB.buildLTODefaultPipeline(OptLevel, nullptr);
+#else
         MPM = PB.buildLTODefaultPipeline(OptLevel, DebugPassManager, nullptr);
+#endif
         break;
       }
     }

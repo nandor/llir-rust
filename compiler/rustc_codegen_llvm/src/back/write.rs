@@ -970,6 +970,7 @@ unsafe fn embed_bitcode(
     //   passed though then these sections will show up in the final output.
     //   Additionally the flag that we need to set here is `SHF_EXCLUDE`.
     if is_apple
+        || cgcx.opts.target_triple.triple().starts_with("llir")
         || cgcx.opts.target_triple.triple().starts_with("wasm")
         || cgcx.opts.target_triple.triple().starts_with("asmjs")
     {

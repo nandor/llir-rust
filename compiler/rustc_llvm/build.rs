@@ -86,6 +86,7 @@ fn main() {
         "nvptx",
         "hexagon",
         "riscv",
+        "llir"
     ];
 
     let mut version_cmd = Command::new(&llvm_config);

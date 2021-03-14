@@ -27,7 +27,7 @@ pub type _Unwind_Trace_Fn =
 #[cfg(target_arch = "x86")]
 pub const unwinder_private_data_size: usize = 5;
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(any(target_arch = "x86_64", target_arch = "llir_x86_64"))]
 pub const unwinder_private_data_size: usize = 6;
 
 #[cfg(all(target_arch = "arm", not(target_os = "ios")))]

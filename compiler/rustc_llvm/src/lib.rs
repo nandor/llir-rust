@@ -170,4 +170,11 @@ pub fn initialize_available_targets() {
         LLVMInitializeWebAssemblyAsmPrinter,
         LLVMInitializeWebAssemblyAsmParser
     );
+    init_target!(
+        llvm_component = "llir",
+        LLVMInitializeLLIRTargetInfo,
+        LLVMInitializeLLIRTarget,
+        LLVMInitializeLLIRTargetMC,
+        LLVMInitializeLLIRAsmPrinter
+    );
 }

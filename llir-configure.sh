@@ -15,7 +15,7 @@ targets = "AArch64;PowerPC;RISCV;X86;LLIR"
 [build]
 build = "$HOST-unknown-linux-gnu"
 host = ["$HOST-unknown-linux-gnu"]
-target = ["$ARCH-unknown-linux-musl"]
+target = ["$HOST-unknown-linux-gnu", "$ARCH-unknown-linux-musl"]
 extended = true
 tools = ["cargo"]
 docs = false

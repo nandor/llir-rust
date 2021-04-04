@@ -3,5 +3,8 @@
 PREFIX="$1"
 HOST=$(uname -m)
 
-OPENSSL_LIB_DIR=/usr/lib/$HOST-linux-gnu OPENSSL_INCLUDE_DIR=/usr/include ./x.py build
+export OPENSSL_LIB_DIR=/usr/lib/$HOST-linux-gnu
+export OPENSSL_INCLUDE_DIR=/usr/include
+
+./x.py build
 

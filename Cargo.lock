@@ -1783,8 +1783,8 @@ checksum = "830d08ce1d1d941e6b30645f1a0eb5643013d835ce3779a5fc208261dbe10f55"
 
 [[package]]
 name = "libc"
-version = "0.2.92"
-source = "git+https://github.com/nandor/llir-rust-libc#master#1c8a2e6efb63d800c6b9d1c975fb739c9eb617d0"
+version = "0.2.93"
+source = "git+https://github.com/nandor/llir-rust-libc#0cba055c393fa4ca76b6c8105916eded7357921f#0cba055c393fa4ca76b6c8105916eded7357921f"
 dependencies = [
  "rustc-std-workspace-core",
 ]

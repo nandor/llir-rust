@@ -98,7 +98,7 @@ rustfmt-nightly = { path = "src/tools/rustfmt" }
 # See comments in `src/tools/rustc-workspace-hack/README.md` for what's going on
 # here
 rustc-workspace-hack = { path = 'src/tools/rustc-workspace-hack' }
-libc = { git = 'https://github.com/nandor/llir-rust-libc#master' }
+libc = { git = 'https://github.com/nandor/llir-rust-libc#0cba055c393fa4ca76b6c8105916eded7357921f' }
 
 # See comments in `library/rustc-std-workspace-core/README.md` for what's going on
 # here
